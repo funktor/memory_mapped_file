@@ -5,6 +5,7 @@ from multiprocessing import Lock
 from concurrent.futures import ProcessPoolExecutor, wait, ThreadPoolExecutor
 
 def loss(probs, labels, weights, bias, reg_lambda, n):
+    # Calculate logistic loss
     l = 0
     for i in range(n):
         l += -labels[i]*math.log(probs[i]) if probs[i] != 0 else 0
@@ -21,18 +22,23 @@ def gradient_descent(labels, weights, bias, num_epochs, batch_size, learning_rat
         i = 0
         while True:
             start, end = i*batch_size, min((i+1)*batch_size, n)
+            
+            # Get data for batch i
             data = feature_obj.get(start, end-1).decode().split(",")
             data = np.array([float(x) for x in data if x != '']).reshape(-1, m)
             
+            # Compute sigmoid values
             h = bias + np.dot(weights, data.T)
             probs[start:end] = 1.0/(1.0+np.exp(-h))
             
             sub_labels = labels[start:end]
             sums = 2*reg_lambda*weights + np.dot((probs[start:end]-sub_labels), data)
             
+            # Update weights
             weights -= learning_rate*sums
             s = np.sum(probs[start:end]-sub_labels) + 2*reg_lambda*bias
                 
+            # Update bias
             bias -= learning_rate*s
             
             i += 1
@@ -59,17 +65,23 @@ class Feature:
         self.batch_len = 1024*1024*100
         self.batch = 0
         
+        # Create file if not exists
         if os.path.isfile(self.file):
             f = open(self.file, 'r+b')
         else:
             f = open(self.file, 'w+b')
+            # Add null character to file and flush so that mmap 
+            # does not see empty file. Without flush, mmap might see
+            # empty file as write is asynchronous.
             f.write(b'\0')
             f.flush()
         
+        # Create mmap
         self.mmap_obj = mmap.mmap(f.fileno(), length=0, access=mmap.ACCESS_WRITE)
         f.close()
         
     def insert(self):
+        # Generate random data
         data = np.random.rand(1, self.dim)[0]
         data = ','.join([str(x) for x in data])
         data = data.encode() + b','
@@ -77,6 +89,7 @@ class Feature:
         with self.lock:
             offset = self.positions[-1] if len(self.positions) > 0 else 0
             
+            # data size will exceed maximum length defined, increase memory map size
             if offset+len(data) >= self.batch*self.batch_len:
                 f = open(self.file, 'r+b')
                 f.seek(offset)
@@ -87,10 +100,14 @@ class Feature:
             
             # print(self.mmap_obj.size(), offset, offset+len(data))
             # print()
+            # Write using memory map
             self.mmap_obj[offset:offset+len(data)] = data
+            
+            # Update positions
             self.positions += [self.positions[-1] + len(data)] if len(self.positions) > 0 else [len(data)]
     
     def get(self, start, end):
+        # Get matrix of features between start and end indices inclusive
         with self.lock:
             start = min(start, len(self.positions))
             end = min(end, len(self.positions)-1)
@@ -116,8 +133,10 @@ class StreamingLogisticRegression:
         self.feature_obj = feature_obj
     
     def train(self, labels):
+        # Initialize weights
         self.weights = init_weights(self.m)
         
+        # Run gradient descent
         self.weights, self.bias = gradient_descent(labels, 
                                                    self.weights, 
                                                    self.bias, 
